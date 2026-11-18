@@ -1,4 +1,4 @@
-  #!/bin/sh
+#!/bin/sh
 set -e
 
 : "${PS3DEV:=/usr/local/ps3dev}"; export PS3DEV
@@ -8,9 +8,7 @@ export PATH="$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin"
 echo "== PS3DEV=$PS3DEV PSL1GHT=$PSL1GHT =="
 ls "$PSL1GHT/ppu_rules"
 
-# localiza cabecalhos e bibliotecas do PSL1GHT nesta imagem
 HDR=$(find "$PS3DEV" -name ppu-types.h 2>/dev/null | head -n 1)
-echo "ppu-types.h: $HDR"
 if [ -z "$HDR" ]; then
   echo "ERRO: ppu-types.h nao encontrado na imagem"
   exit 1
@@ -18,33 +16,56 @@ fi
 INCDIR=$(dirname "$HDR")
 
 LIBIO=$(find "$PS3DEV" -name libio.a 2>/dev/null | head -n 1)
-echo "libio.a: $LIBIO"
 LIBDIR=""
 if [ -n "$LIBIO" ]; then LIBDIR=$(dirname "$LIBIO"); fi
 
 export C_INCLUDE_PATH="$INCDIR:$PS3DEV/portlibs/ppu/include"
 export CPLUS_INCLUDE_PATH="$C_INCLUDE_PATH"
 export LIBRARY_PATH="$LIBDIR:$PS3DEV/portlibs/ppu/lib"
-echo "C_INCLUDE_PATH=$C_INCLUDE_PATH"
-echo "LIBRARY_PATH=$LIBRARY_PATH"
 
 ROOT=$(pwd)
 SAMPLES="$ROOT/PSL1GHT/samples"
 
-RSXC=$(find "$SAMPLES" -name rsxutil.c | sort | head -n 1)
-RSXH=$(find "$SAMPLES" -name rsxutil.h | sort | head -n 1)
-if [ -z "$RSXC" ] || [ -z "$RSXH" ]; then
-  echo "ERRO: rsxutil nao encontrado nos exemplos do PSL1GHT"
+# escolhe a versao do rsxutil compativel com o jogo
+PICK_H=""
+PICK_C=""
+FIRST_H=""
+FIRST_C=""
+echo "== variantes de rsxutil.h =="
+for H in $(find "$SAMPLES" -name rsxutil.h | sort); do
+  SD=$(dirname "$H")
+  C=""
+  for CAND in "$SD/rsxutil.c" "$SD/../source/rsxutil.c" "$SD/../rsxutil.c"; do
+    if [ -z "$C" ] && [ -f "$CAND" ]; then C="$CAND"; fi
+  done
+  echo "-- $H"
+  echo "   rsxutil.c: $C"
+  grep -nE 'buffers|currentBuffer|waitFlip|waitflip|init_screen|flip\(' "$H" || true
+  if [ -z "$FIRST_H" ] && [ -n "$C" ]; then FIRST_H="$H"; FIRST_C="$C"; fi
+  if [ -z "$PICK_H" ] && [ -n "$C" ] \
+     && grep -q 'currentBuffer' "$H" \
+     && grep -q 'waitFlip' "$H" \
+     && grep -q 'buffers' "$H"; then
+    PICK_H="$H"; PICK_C="$C"
+  fi
+done
+
+if [ -z "$PICK_H" ]; then
+  echo "AVISO: nenhuma versao compativel de rsxutil encontrada; usando a primeira"
+  PICK_H="$FIRST_H"; PICK_C="$FIRST_C"
+fi
+if [ -z "$PICK_H" ]; then
+  echo "ERRO: rsxutil nao encontrado nos exemplos"
   exit 1
 fi
+echo "rsxutil escolhido: $PICK_H"
 
 # escolhe um exemplo cujo Makefile tenha o alvo pkg
 BASE=""
 for MK in $(find "$SAMPLES" -name Makefile | sort); do
   D=$(dirname "$MK")
-  if grep -q '^pkg' "$MK" && ! grep -qi 'spu' "$MK" && [ -d "$D/source" ]; then
+  if [ -z "$BASE" ] && grep -q '^pkg' "$MK" && ! grep -qi 'spu' "$MK" && [ -d "$D/source" ]; then
     BASE="$D"
-    break
   fi
 done
 if [ -z "$BASE" ]; then
@@ -59,13 +80,19 @@ mkdir -p "$ROOT/work"
 cp -r "$BASE" "$OUT"
 
 find "$OUT/source" -maxdepth 1 \( -name '*.c' -o -name '*.cpp' \) -delete
-cp "$RSXC" "$OUT/source/rsxutil.c"
-cp "$RSXH" "$OUT/source/rsxutil.h"
+cp "$PICK_C" "$OUT/source/rsxutil.c"
+cp "$PICK_H" "$OUT/source/rsxutil.h"
 cp "$ROOT/source/main.c" "$OUT/source/main.c"
+
+# usa o HOST_SIZE do proprio rsxutil.h
+sed -i '/^#define HOST_SIZE/d' "$OUT/source/main.c"
+# se o header so tem waitflip (minusculo), ajusta o nome
+if ! grep -q 'waitFlip' "$OUT/source/rsxutil.h"; then
+  sed -i 's/waitFlip/waitflip/g' "$OUT/source/main.c"
+fi
 
 if [ -d "$OUT/data" ]; then rm -rf "$OUT"/data/*; fi
 
-# a imagem usa o formato antigo de regras: troca o include do Makefile
 sed -i 's#\$(PSL1GHT)/host/ppu.mk#$(PSL1GHT)/ppu_rules#' "$OUT/Makefile"
 
 cd "$OUT"
