@@ -1,0 +1,25 @@
+name: Build PS3 PKG
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Baixar o projeto
+        uses: actions/checkout@v4
+
+      - name: Baixar exemplos do PSL1GHT
+        run: git clone --depth 1 https://github.com/ps3dev/PSL1GHT.git PSL1GHT
+
+      - name: Compilar dentro da imagem ps3dev
+        run: |
+          docker run --rm -v "$PWD":/work -w /work ps3dev/ps3dev sh build.sh
+
+      - name: Enviar o .pkg
+        uses: actions/upload-artifact@v4
+        with:
+          name: BlockBurst-pkg
+          path: dist/BlockBurst.pkg
