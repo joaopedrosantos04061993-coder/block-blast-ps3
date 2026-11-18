@@ -6,40 +6,53 @@ set -e
 export PATH="$PATH:$PS3DEV/bin:$PS3DEV/ppu/bin:$PS3DEV/spu/bin"
 
 ROOT=$(pwd)
+SAMPLES="$ROOT/PSL1GHT/samples"
 
-RSX=$(find "$ROOT/PSL1GHT/samples" -name rsxutil.c | sort | head -n 1)
-if [ -z "$RSX" ]; then
-  echo "ERRO: rsxutil.c nao encontrado nos exemplos do PSL1GHT"
+RSXC=$(find "$SAMPLES" -name rsxutil.c | sort | head -n 1)
+RSXH=$(find "$SAMPLES" -name rsxutil.h | sort | head -n 1)
+if [ -z "$RSXC" ] || [ -z "$RSXH" ]; then
+  echo "ERRO: rsxutil nao encontrado nos exemplos do PSL1GHT"
   exit 1
 fi
+echo "rsxutil.c: $RSXC"
+echo "rsxutil.h: $RSXH"
 
-SRC=$(dirname "$RSX")
-if [ "$(basename "$SRC")" = "source" ]; then
-  SAMPLE=$(dirname "$SRC")
-else
-  SAMPLE="$SRC"
+# escolhe um exemplo cujo Makefile tenha o alvo pkg
+BASE=""
+for MK in $(find "$SAMPLES" -name Makefile | sort); do
+  D=$(dirname "$MK")
+  if grep -q '^pkg' "$MK" && ! grep -qi 'spu' "$MK" && [ -d "$D/source" ]; then
+    BASE="$D"
+    break
+  fi
+done
+if [ -z "$BASE" ]; then
+  echo "ERRO: nenhum exemplo com alvo pkg encontrado"
+  exit 1
 fi
-echo "Usando exemplo base: $SAMPLE"
+echo "Usando exemplo base: $BASE"
 
 OUT="$ROOT/work/blockburst"
 rm -rf "$ROOT/work"
 mkdir -p "$ROOT/work"
-cp -r "$SAMPLE" "$OUT"
+cp -r "$BASE" "$OUT"
 
-OUTSRC="$OUT${SRC#$SAMPLE}"
+# troca os fontes do exemplo pelos do jogo
+find "$OUT/source" -maxdepth 1 \( -name '*.c' -o -name '*.cpp' \) -delete
+cp "$RSXC" "$OUT/source/rsxutil.c"
+cp "$RSXH" "$OUT/source/rsxutil.h"
+cp "$ROOT/source/main.c" "$OUT/source/main.c"
 
-find "$OUTSRC" -maxdepth 1 \( -name '*.c' -o -name '*.cpp' \) ! -name 'rsxutil.c' -delete
-cp "$ROOT/source/main.c" "$OUTSRC/main.c"
-
-[ -d "$OUT/data" ] && rm -rf "$OUT"/data/* || true
-
-sed -i -E 's/^TITLE[[:space:]]*:?=.*/TITLE := Block Burst/' "$OUT/Makefile"
-sed -i -E 's/^APPID[[:space:]]*:?=.*/APPID := BLKBURST0/' "$OUT/Makefile"
-sed -i -E 's/^CONTENTID[[:space:]]*:?=.*/CONTENTID := UP0001-$(APPID)_00-0000000000000000/' "$OUT/Makefile"
+# dados do exemplo (shaders etc.) nao sao necessarios
+if [ -d "$OUT/data" ]; then rm -rf "$OUT"/data/*; fi
 
 cd "$OUT"
 make clean || true
-make pkg
+make pkg \
+  TITLE="Block Burst" \
+  APPID=BLKBURST0 \
+  CONTENTID=UP0001-BLKBURST0_00-0000000000000000 \
+  LIBS="-lrsx -lgcm_sys -lio -lsysutil -lrt -llv2 -lm"
 
 mkdir -p "$ROOT/dist"
 find "$OUT" -name '*.pkg' -exec cp {} "$ROOT/dist/BlockBurst.pkg" \;
