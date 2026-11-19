@@ -2,14 +2,14 @@
  * BLOCK BURST - puzzle de blocos 8x8 para PS3 (PSL1GHT)
  *
  * Controles:
- *   D-Pad   mover a peça no tabuleiro
- *   L1 / R1 trocar de peça (das 3 disponíveis)
- *   X       colocar a peça
+ *   D-Pad   mover a peca no tabuleiro
+ *   L1 / R1 trocar de peca (das 3 disponiveis)
+ *   X       colocar a peca
  *   START   novo jogo
  *
- * Regras: complete linhas ou colunas inteiras para limpá-las.
- * Limpar várias de uma vez dá combo (pontos = 10 * n * n).
- * Fim de jogo: nenhuma das peças restantes cabe no tabuleiro.
+ * Regras: complete linhas ou colunas inteiras para limpa-las.
+ * Limpar varias de uma vez da combo (pontos = 10 * n * n).
+ * Fim de jogo: nenhuma das pecas restantes cabe no tabuleiro.
  */
 #include <stdio.h>
 #include <stdlib.h>
@@ -18,11 +18,18 @@
 #include <unistd.h>
 #include <ppu-types.h>
 #include <sysutil/sysutil.h>
+#include <sysutil/video.h>
 #include <io/pad.h>
 
 #include "rsxutil.h"
 
-#define HOST_SIZE (1024 * 1024)
+#ifndef MAX_BUFFERS
+#define MAX_BUFFERS 2
+#endif
+#ifndef HOST_SIZE
+#define HOST_SIZE (32 * 1024 * 1024)
+#endif
+
 #define N 8
 
 /* ---------- Pecas ---------- */
@@ -65,10 +72,15 @@ static int running = 1;
 static int dirty = 2;       /* redesenha 2x (double buffer) */
 static unsigned tick;
 
-/* ---------- Desenho ---------- */
+/* ---------- Video ---------- */
+static gcmContextData *gctx;
+static rsxBuffer gbuf[MAX_BUFFERS];
+static int gcur = 0;
+
 static u32 *fb;
 static int W, H;
 
+/* ---------- Desenho ---------- */
 static void rect(int x, int y, int w, int h, u32 c)
 {
     if (x < 0) { w += x; x = 0; }
@@ -272,12 +284,22 @@ int main(int argc, const char *argv[])
     (void)argc; (void)argv;
 
     void *host_addr = memalign(1024 * 1024, HOST_SIZE);
-    init_screen(host_addr, HOST_SIZE);
+    gctx = initScreen(host_addr, HOST_SIZE);
+
     ioPadInit(7);
     sysUtilRegisterCallback(0, sysutil_cb, NULL);
 
-    W = display_width;
-    H = display_height;
+    /* resolucao atual da tela */
+    videoState vstate;
+    videoResolution vres;
+    videoGetState(0, 0, &vstate);
+    videoGetResolution(vstate.displayMode.resolution, &vres);
+    W = vres.width;
+    H = vres.height;
+
+    for (int i = 0; i < MAX_BUFFERS; i++)
+        makeBuffer(&gbuf[i], vres.width, vres.height, i);
+    flip(gctx, MAX_BUFFERS - 1);
 
     newGame();
 
@@ -315,10 +337,10 @@ int main(int argc, const char *argv[])
 
         if (dirty) {
             waitFlip();
-            fb = (u32 *)buffers[currentBuffer]->ptr;
+            fb = (u32 *)gbuf[gcur].ptr;
             draw();
-            flip(currentBuffer);
-            currentBuffer = !currentBuffer;
+            flip(gctx, gbuf[gcur].id);
+            gcur = (gcur + 1) % MAX_BUFFERS;
             dirty--;
         } else {
             usleep(16000);
